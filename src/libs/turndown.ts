@@ -1,22 +1,25 @@
 import TurndownService from 'turndown';
+import type { ConversionOptions } from '../types';
 
-// We instantiate Turndown once to avoid recreating it on every render.
-const turndownService = new TurndownService({
-  headingStyle: 'atx',
-  hr: '---',
-  bulletListMarker: '-',
-  codeBlockStyle: 'fenced'
-});
+let cachedService: TurndownService | null = null;
+let cachedOptionsKey = '';
 
 /**
  * Converts raw HTML string to clean Markdown.
+ * Caches the TurndownService instance for repeated calls with the same options.
  */
-export const htmlToMarkdown = (html: string): string => {
-  if (!html || !html.trim()) return '';
+export const htmlToMarkdown = (html: string, options: ConversionOptions): string => {
+  if (!html?.trim()) return '';
+
+  const key = JSON.stringify(options);
+  if (key !== cachedOptionsKey || !cachedService) {
+    cachedService = new TurndownService(options);
+    cachedOptionsKey = key;
+  }
+
   try {
-    return turndownService.turndown(html);
-  } catch (error) {
-    console.error("Error converting HTML to Markdown", error);
-    return "";
+    return cachedService.turndown(html);
+  } catch {
+    return '';
   }
 };

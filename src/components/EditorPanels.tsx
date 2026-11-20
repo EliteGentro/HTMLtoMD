@@ -1,19 +1,25 @@
-import { useState, useCallback, useRef, type DragEvent } from 'react';
+import { useState, useCallback, useEffect, useRef, type DragEvent, type ClipboardEvent, type KeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Eye, Edit3, Copy, Check, Download, Trash2, FileText, Undo2, Redo2 } from 'lucide-react';
 import { downloadMarkdown } from '../libs/download';
+import { isHtmlFileName, pickPastedHtml } from '../libs/text-utils';
+import { SHORTCUT_LABELS, isRedoShortcut, isUndoShortcut } from '../libs/shortcuts';
+import type { ShowToast } from '../types';
 
 interface EditorPanelsProps {
   htmlInput: string;
   markdownOutput: string;
+  downloadName: string;
   onHtmlChange: (html: string) => void;
-  onMarkdownChange: (md: string) => void;
+  onFileLoad: (html: string, fileName: string) => void;
+  onMarkdownEdit: (md: string) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
   onClear: () => void;
-  onToast: (message: string) => void;
+  onToast: ShowToast;
 }
 
 function wordCount(text: string): number {
@@ -23,8 +29,10 @@ function wordCount(text: string): number {
 export default function EditorPanels({
   htmlInput,
   markdownOutput,
+  downloadName,
   onHtmlChange,
-  onMarkdownChange,
+  onFileLoad,
+  onMarkdownEdit,
   onUndo,
   onRedo,
   canUndo,
@@ -36,6 +44,9 @@ export default function EditorPanels({
   const [isDragOver, setIsDragOver] = useState(false);
   const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   const handleCopy = async () => {
     if (!markdownOutput) return;
@@ -43,54 +54,81 @@ export default function EditorPanels({
       await navigator.clipboard.writeText(markdownOutput);
       setCopied(true);
       onToast('Copied to clipboard');
-      setTimeout(() => setCopied(false), 2000);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
     } catch {
-      onToast('Failed to copy');
+      onToast('Failed to copy', 'error');
     }
   };
 
   const handleDownload = () => {
     if (!markdownOutput) return;
-    downloadMarkdown(markdownOutput);
-    onToast('Downloaded converted.md');
+    downloadMarkdown(markdownOutput, downloadName);
+    onToast(`Downloaded ${downloadName}`);
   };
+
+  const readFile = useCallback((file: File) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result;
+      if (typeof text === 'string') onFileLoad(text, file.name);
+    };
+    reader.onerror = () => onToast(`Could not read ${file.name}`, 'error');
+    reader.readAsText(file);
+  }, [onFileLoad, onToast]);
 
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
 
     const file = e.dataTransfer.files[0];
-    if (file && (file.type === 'text/html' || file.name.endsWith('.html') || file.name.endsWith('.htm'))) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result;
-        if (typeof text === 'string') onHtmlChange(text);
-      };
-      reader.readAsText(file);
-    } else {
-      const text = e.dataTransfer.getData('text/html') || e.dataTransfer.getData('text/plain');
-      if (text) onHtmlChange(text);
+    if (file) {
+      if (file.type === 'text/html' || isHtmlFileName(file.name)) readFile(file);
+      else onToast('Only .html and .htm files are supported', 'error');
+      return;
     }
-  }, [onHtmlChange]);
+    const text = e.dataTransfer.getData('text/html') || e.dataTransfer.getData('text/plain');
+    if (text) onHtmlChange(text);
+  }, [onHtmlChange, onToast, readFile]);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
     setIsDragOver(true);
   }, []);
 
-  const handleDragLeave = useCallback(() => setIsDragOver(false), []);
+  // dragleave also fires when moving onto a child element — ignore those
+  const handleDragLeave = useCallback((e: DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+    setIsDragOver(false);
+  }, []);
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result;
-      if (typeof text === 'string') onHtmlChange(text);
-    };
-    reader.readAsText(file);
+    if (file) readFile(file);
     e.target.value = '';
-  }, [onHtmlChange]);
+  }, [readFile]);
+
+  // Pasting rendered content (web page, doc, email) inserts its HTML instead of plain text
+  const handleHtmlPaste = useCallback((e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const html = pickPastedHtml(e.clipboardData.getData('text/plain'), e.clipboardData.getData('text/html'));
+    if (html === null) return;
+    e.preventDefault();
+    const { selectionStart, selectionEnd, value } = e.currentTarget;
+    onHtmlChange(value.slice(0, selectionStart) + html + value.slice(selectionEnd));
+    onToast('Pasted as HTML');
+  }, [onHtmlChange, onToast]);
+
+  // Route undo/redo in the Markdown editor through the app history, which also
+  // tracks find/replace and re-conversions that the native textarea undo can't see
+  const handleMarkdownKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isUndoShortcut(e)) {
+      e.preventDefault();
+      onUndo();
+    } else if (isRedoShortcut(e)) {
+      e.preventDefault();
+      onRedo();
+    }
+  }, [onUndo, onRedo]);
 
   return (
     <div className="flex-1 flex flex-col md:flex-row min-h-0 overflow-hidden">
@@ -127,7 +165,7 @@ export default function EditorPanels({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".html,.htm"
+            accept=".html,.htm,text/html"
             onChange={handleFileInput}
             className="hidden"
             aria-hidden="true"
@@ -142,7 +180,7 @@ export default function EditorPanels({
               </div>
               <div className="text-center">
                 <p className="font-medium text-text-secondary">Paste HTML or drop a file</p>
-                <p className="text-xs mt-1">Supports .html and .htm files</p>
+                <p className="text-xs mt-1">Copy from any web page or doc to paste its HTML · .html and .htm files</p>
               </div>
             </div>
           )}
@@ -150,6 +188,7 @@ export default function EditorPanels({
             className="absolute inset-0 w-full h-full bg-transparent text-text-primary p-4 resize-none focus:outline-none font-mono text-sm leading-relaxed"
             value={htmlInput}
             onChange={(e) => onHtmlChange(e.target.value)}
+            onPaste={handleHtmlPaste}
             spellCheck={false}
             aria-label="HTML input editor"
           />
@@ -172,7 +211,7 @@ export default function EditorPanels({
               disabled={!canUndo}
               className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
               aria-label="Undo"
-              title="Undo (⌘Z)"
+              title={`Undo (${SHORTCUT_LABELS.undo})`}
             >
               <Undo2 size={14} />
             </button>
@@ -181,7 +220,7 @@ export default function EditorPanels({
               disabled={!canRedo}
               className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
               aria-label="Redo"
-              title="Redo (⌘⇧Z)"
+              title={`Redo (${SHORTCUT_LABELS.redo})`}
             >
               <Redo2 size={14} />
             </button>
@@ -209,7 +248,7 @@ export default function EditorPanels({
                   : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover'
               } disabled:opacity-30 disabled:cursor-not-allowed`}
               aria-label="Copy markdown"
-              title="Copy (⌘⇧C)"
+              title={`Copy (${SHORTCUT_LABELS.copy})`}
             >
               {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
@@ -218,7 +257,7 @@ export default function EditorPanels({
               disabled={!markdownOutput}
               className="p-1.5 rounded-md text-text-muted hover:text-text-secondary hover:bg-bg-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
               aria-label="Download as markdown file"
-              title="Download .md"
+              title={`Download ${downloadName}`}
             >
               <Download size={14} />
             </button>
@@ -229,7 +268,7 @@ export default function EditorPanels({
           {isPreviewMode ? (
             <div className="p-6 prose prose-sm md:prose-base dark:prose-invert max-w-none">
               {markdownOutput ? (
-                <ReactMarkdown>{markdownOutput}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdownOutput}</ReactMarkdown>
               ) : (
                 <p className="text-text-muted italic">Nothing to preview</p>
               )}
@@ -238,7 +277,8 @@ export default function EditorPanels({
             <textarea
               className="absolute inset-0 w-full h-full bg-transparent text-text-primary p-4 resize-none focus:outline-none font-mono text-sm leading-relaxed"
               value={markdownOutput}
-              onChange={(e) => onMarkdownChange(e.target.value)}
+              onChange={(e) => onMarkdownEdit(e.target.value)}
+              onKeyDown={handleMarkdownKeyDown}
               placeholder="Converted Markdown appears here..."
               spellCheck={false}
               aria-label="Markdown output editor"

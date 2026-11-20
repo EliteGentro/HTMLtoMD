@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Search, Replace, XCircle, ChevronUp, ChevronDown } from 'lucide-react';
 import { findAndReplaceText, removeEmojis } from '../libs/text-utils';
+import type { ShowToast } from '../types';
 
 interface ToolbarProps {
   markdownOutput: string;
   onMarkdownChange: (md: string) => void;
-  onToast: (message: string) => void;
+  onToast: ShowToast;
 }
 
 export default function Toolbar({ markdownOutput, onMarkdownChange, onToast }: ToolbarProps) {
@@ -19,6 +20,8 @@ export default function Toolbar({ markdownOutput, onMarkdownChange, onToast }: T
     if (result !== markdownOutput) {
       onMarkdownChange(result);
       onToast('Replaced all occurrences');
+    } else {
+      onToast(`No matches for "${findValue}"`, 'error');
     }
   };
 
@@ -28,6 +31,8 @@ export default function Toolbar({ markdownOutput, onMarkdownChange, onToast }: T
     if (result !== markdownOutput) {
       onMarkdownChange(result);
       onToast('Emojis removed');
+    } else {
+      onToast('No emojis found', 'error');
     }
   };
 

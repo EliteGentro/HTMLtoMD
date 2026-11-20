@@ -1,55 +1,63 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from './hooks/useTheme';
 import { useConverter } from './hooks/useConverter';
+import { isCopyShortcut, isRedoShortcut, isUndoShortcut } from './libs/shortcuts';
 import Header from './components/Header';
 import EditorPanels from './components/EditorPanels';
 import Toolbar from './components/Toolbar';
 import ConversionOptionsPanel from './components/ConversionOptions';
 import Toast from './components/Toast';
+import type { ShowToast, ToastType } from './types';
+
+interface ToastState {
+  id: number;
+  message: string;
+  type: ToastType;
+}
 
 function App() {
   const { theme, toggleTheme } = useTheme();
   const {
-    htmlInput, setHtmlInput,
-    markdownOutput, updateMarkdown,
+    htmlInput, setHtmlInput, loadFile, downloadName,
+    markdownOutput, editMarkdown, updateMarkdown,
     options, setOptions,
     undo, redo, canUndo, canRedo,
     clear,
   } = useConverter();
 
   const [showOptions, setShowOptions] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const toastId = useRef(0);
 
-  const showToast = useCallback((message: string) => setToast(message), []);
+  // A fresh id per call restarts the toast even when the message repeats
+  const showToast: ShowToast = useCallback((message, type = 'success') => {
+    setToast({ id: ++toastId.current, message, type });
+  }, []);
   const dismissToast = useCallback(() => setToast(null), []);
 
   // Global keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-
-      // Copy markdown: Cmd+Shift+C
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'c') {
+      if (isCopyShortcut(e)) {
         e.preventDefault();
         if (markdownOutput) {
-          navigator.clipboard.writeText(markdownOutput).then(() => showToast('Copied to clipboard'));
+          navigator.clipboard.writeText(markdownOutput).then(
+            () => showToast('Copied to clipboard'),
+            () => showToast('Failed to copy', 'error'),
+          );
         }
+        return;
       }
 
-      // Undo: Cmd+Z (only when not in textarea)
-      if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) {
-        if (document.activeElement?.tagName !== 'TEXTAREA') {
-          e.preventDefault();
-          undo();
-        }
-      }
+      // Outside text fields only — textareas handle their own undo/redo
+      if (document.activeElement?.tagName === 'TEXTAREA' || document.activeElement?.tagName === 'INPUT') return;
 
-      // Redo: Cmd+Shift+Z (only when not in textarea)
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'z') {
-        if (document.activeElement?.tagName !== 'TEXTAREA') {
-          e.preventDefault();
-          redo();
-        }
+      if (isUndoShortcut(e)) {
+        e.preventDefault();
+        undo();
+      } else if (isRedoShortcut(e)) {
+        e.preventDefault();
+        redo();
       }
     };
 
@@ -81,8 +89,10 @@ function App() {
         <EditorPanels
           htmlInput={htmlInput}
           markdownOutput={markdownOutput}
+          downloadName={downloadName}
           onHtmlChange={setHtmlInput}
-          onMarkdownChange={updateMarkdown}
+          onFileLoad={loadFile}
+          onMarkdownEdit={editMarkdown}
           onUndo={undo}
           onRedo={redo}
           canUndo={canUndo}
@@ -98,7 +108,9 @@ function App() {
         />
       </main>
 
-      {toast && <Toast message={toast} onDismiss={dismissToast} />}
+      {toast && (
+        <Toast key={toast.id} message={toast.message} type={toast.type} onDismiss={dismissToast} />
+      )}
     </div>
   );
 }

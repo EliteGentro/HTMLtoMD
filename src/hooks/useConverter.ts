@@ -1,46 +1,30 @@
 import { useState, useCallback, useEffect, useReducer } from 'react';
 import { htmlToMarkdown } from '../libs/turndown';
+import { historyReducer, initialHistory, hasPendingEdit, canUndo, canRedo } from '../libs/history';
+import { readStorage, writeStorage } from '../libs/storage';
 import { useDebounce } from './useDebounce';
 import { DEFAULT_CONVERSION_OPTIONS } from '../types';
 import type { ConversionOptions } from '../types';
 
-const MAX_HISTORY = 50;
+const OPTIONS_STORAGE_KEY = 'htmltomd:options';
+const EDIT_COMMIT_DELAY = 500;
 
-interface HistoryState {
-  entries: string[];
-  index: number;
-}
-
-type HistoryAction =
-  | { type: 'PUSH'; value: string }
-  | { type: 'UNDO' }
-  | { type: 'REDO' }
-  | { type: 'RESET' };
-
-function historyReducer(state: HistoryState, action: HistoryAction): HistoryState {
-  switch (action.type) {
-    case 'PUSH': {
-      if (action.value === state.entries[state.index]) return state;
-      const newEntries = [...state.entries.slice(0, state.index + 1), action.value];
-      const trimmed = newEntries.length > MAX_HISTORY ? newEntries.slice(-MAX_HISTORY) : newEntries;
-      return { entries: trimmed, index: trimmed.length - 1 };
-    }
-    case 'UNDO':
-      return state.index > 0 ? { ...state, index: state.index - 1 } : state;
-    case 'REDO':
-      return state.index < state.entries.length - 1 ? { ...state, index: state.index + 1 } : state;
-    case 'RESET':
-      return { entries: [''], index: 0 };
-  }
+function loadOptions(): ConversionOptions {
+  // Merge over defaults so options added later still get a value
+  return { ...DEFAULT_CONVERSION_OPTIONS, ...readStorage<Partial<ConversionOptions>>(OPTIONS_STORAGE_KEY, {}) };
 }
 
 export function useConverter() {
   const [htmlInput, setHtmlInput] = useState('');
-  const [options, setOptions] = useState<ConversionOptions>(DEFAULT_CONVERSION_OPTIONS);
-  const [history, dispatch] = useReducer(historyReducer, { entries: [''], index: 0 });
+  const [sourceName, setSourceName] = useState<string | null>(null);
+  const [options, setOptions] = useState<ConversionOptions>(loadOptions);
+  const [history, dispatch] = useReducer(historyReducer, initialHistory);
 
-  const markdownOutput = history.entries[history.index];
   const debouncedHtml = useDebounce(htmlInput, 200);
+
+  useEffect(() => {
+    writeStorage(OPTIONS_STORAGE_KEY, options);
+  }, [options]);
 
   // Auto-convert when debounced HTML or options change
   useEffect(() => {
@@ -48,8 +32,28 @@ export function useConverter() {
     dispatch({ type: 'PUSH', value: md });
   }, [debouncedHtml, options]);
 
+  // Commit manual edits to history once typing pauses
+  const pending = hasPendingEdit(history);
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setTimeout(() => dispatch({ type: 'COMMIT' }), EDIT_COMMIT_DELAY);
+    return () => clearTimeout(timer);
+  }, [pending, history.live]);
+
+  /** Manual typing in the Markdown editor (grouped into undo steps). */
+  const editMarkdown = useCallback((newMd: string) => {
+    dispatch({ type: 'EDIT', value: newMd });
+  }, []);
+
+  /** Whole-document changes (find/replace, emoji removal) — one undo step each. */
   const updateMarkdown = useCallback((newMd: string) => {
+    dispatch({ type: 'COMMIT' });
     dispatch({ type: 'PUSH', value: newMd });
+  }, []);
+
+  const loadFile = useCallback((html: string, name: string) => {
+    setHtmlInput(html);
+    setSourceName(name);
   }, []);
 
   const undo = useCallback(() => dispatch({ type: 'UNDO' }), []);
@@ -57,20 +61,26 @@ export function useConverter() {
 
   const clear = useCallback(() => {
     setHtmlInput('');
+    setSourceName(null);
     dispatch({ type: 'RESET' });
   }, []);
+
+  const downloadName = sourceName ? sourceName.replace(/\.html?$/i, '') + '.md' : 'converted.md';
 
   return {
     htmlInput,
     setHtmlInput,
-    markdownOutput,
+    loadFile,
+    downloadName,
+    markdownOutput: history.live,
+    editMarkdown,
     updateMarkdown,
     options,
     setOptions,
     undo,
     redo,
-    canUndo: history.index > 0,
-    canRedo: history.index < history.entries.length - 1,
+    canUndo: canUndo(history),
+    canRedo: canRedo(history),
     clear,
   };
 }

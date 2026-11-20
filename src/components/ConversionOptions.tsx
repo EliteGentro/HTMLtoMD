@@ -66,6 +66,31 @@ export default function ConversionOptionsPanel({ options, onChange }: Conversion
         </label>
 
         <label className="flex items-center gap-2">
+          <span className="text-text-secondary whitespace-nowrap text-xs">Italic</span>
+          <select
+            value={options.emDelimiter}
+            onChange={(e) => update('emDelimiter', e.target.value as '*' | '_')}
+            className={selectClass}
+          >
+            <option value="*">* Asterisk</option>
+            <option value="_">_ Underscore</option>
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2">
+          <span className="text-text-secondary whitespace-nowrap text-xs">Rule</span>
+          <select
+            value={options.hr}
+            onChange={(e) => update('hr', e.target.value as '---' | '***' | '___')}
+            className={selectClass}
+          >
+            <option value="---">--- Dashes</option>
+            <option value="***">*** Asterisks</option>
+            <option value="___">___ Underscores</option>
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2">
           <span className="text-text-secondary whitespace-nowrap text-xs">Links</span>
           <select
             value={options.linkStyle}

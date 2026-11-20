@@ -1,10 +1,14 @@
 export type Theme = 'light' | 'dark';
 
+export type ToastType = 'success' | 'error';
+
+export type ShowToast = (message: string, type?: ToastType) => void;
+
 export interface ConversionOptions {
   headingStyle: 'atx' | 'setext';
   bulletListMarker: '-' | '*' | '+';
   codeBlockStyle: 'fenced' | 'indented';
-  hr: string;
+  hr: '---' | '***' | '___';
   strongDelimiter: '**' | '__';
   emDelimiter: '*' | '_';
   linkStyle: 'inlined' | 'referenced';

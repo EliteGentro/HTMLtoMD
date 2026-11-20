@@ -1,5 +1,6 @@
 import { Moon, Sun, Code2, Settings2, Keyboard } from 'lucide-react';
 import type { Theme } from '../types';
+import { SHORTCUT_LABELS } from '../libs/shortcuts';
 
 interface HeaderProps {
   theme: Theme;
@@ -31,7 +32,7 @@ export default function Header({ theme, onThemeToggle, onToggleOptions, showOpti
 
         <div className="hidden sm:flex items-center gap-1 px-2 py-1 rounded-md bg-bg-toolbar text-text-muted text-xs font-mono">
           <Keyboard size={12} />
-          <span>⌘⇧C copy</span>
+          <span>{SHORTCUT_LABELS.copy} copy</span>
         </div>
 
         <button
